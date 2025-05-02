@@ -200,7 +200,9 @@ def main():
                     eye_gaze = EyeGaze
                     eye_gaze.yaw = value_mapping["yaw"]
                     eye_gaze.pitch = value_mapping["pitch"]
+
                     # Compute eye_gaze vector at depth_m reprojection in the image
+                    # Top right = (0,0), down = +x, left = +y
                     gaze_projection = get_gaze_vector_reprojection(
                         eye_gaze,
                         "camera-rgb",
