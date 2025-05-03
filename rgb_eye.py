@@ -134,7 +134,7 @@ def calcsads(targets):
 
 
 
-model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True)
+model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True, device="mps")
 
 
 object_window = "Object Tracking"
