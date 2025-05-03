@@ -90,6 +90,139 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+
+import numba
+from numba import jit, prange
+import copy
+
+shift = 10
+skip = 5
+width, height = (1408, 1408)
+w, h = (400, 400)
+doinference = True
+
+
+lasthit = -1
+totalhit = 0
+black = np.zeros((height, width, 3), dtype=np.uint8)
+lasthittarget = np.zeros((h + 1, w + 1, 3), dtype=np.int32)
+
+images = []
+gazes = []
+
+
+@numba.jit(nopython=True, parallel=True, fastmath=True, cache=True, nogil=True)
+def calcsads(targets):
+
+    length = len(targets)
+    sads = np.full((length, length), np.iinfo(np.int32).max, dtype=np.int32)
+    
+    for index in prange(length):
+        target = targets[index]
+        
+        for sweepindex in prange(length):
+            image = targets[sweepindex]
+
+            if index != sweepindex and image.shape == target.shape:
+                sad = np.sum(np.abs(np.subtract(image, target)))
+
+                sads[index][sweepindex] = sad
+                sads[sweepindex][index] = sad
+        
+    return np.argmax(np.bincount(sads.argmin(axis=1)))
+
+
+
+model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True)
+
+
+object_window = "Object Tracking"
+cv2.namedWindow(object_window, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(object_window, 512, 512)
+cv2.setWindowProperty(object_window, cv2.WND_PROP_TOPMOST, 1)
+cv2.moveWindow(object_window, 50, 50)
+
+
+
+def vote():
+    global lasthit, black, lasthittarget, totalhit
+    index = len(images) - 1
+    row, col = gazes[index]
+    
+    image = images[index].astype(np.uint8, copy=True)
+    image = cv2.rectangle(image, (col-w//2, row-h//2), (col+w//2, row+h//2), color=(0, 255, 0), thickness=2)
+    cv2.putText(image, str(index), (0, 0+20), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+
+    ###continue
+
+    if index < lasthit + shift:
+        image = cv2.hconcat([image, black])
+        #@video.write(image)
+        cv2.imshow(object_window, image)
+        ###continue
+        return
+    
+    targets = []
+
+    for sweepindex in prange(lasthit + 1, index + 1):
+        target = images[sweepindex].astype(np.int32, copy=True)
+        targetrow, targetcol = gazes[sweepindex]
+        targets.append(target[targetrow-h//2:targetrow+h//2+1, targetcol-w//2:targetcol+w//2+1])
+
+    minsadindex = calcsads(targets)
+    newhit = minsadindex + (lasthit + 1)
+    lasthit = newhit
+
+    newtargets = copy.deepcopy(targets)
+    newtargets[minsadindex] = lasthittarget.copy()
+    
+    if True and calcsads(newtargets) == minsadindex:
+        lasthittarget = targets[minsadindex].copy()
+        image = cv2.hconcat([image, black])
+        #@video.write(image)
+        cv2.imshow(object_window, image)
+        ###print(index)
+        ###continue
+        return
+        pass
+    else:
+        pass
+
+    if True and minsadindex < skip:
+        image = cv2.hconcat([image, black])
+        #@video.write(image)
+        cv2.imshow(object_window, image)
+        ###continue
+        return
+    else:
+        lasthittarget = targets[minsadindex].copy()
+        newhitimage = images[newhit].astype(np.uint8, copy=True)
+        newhitrow, newhitcol = gazes[newhit]
+        newhitmask = newhitimage.copy()
+        newhitmask[newhitrow-h//2:newhitrow+h//2+1, newhitcol-w//2:newhitcol+w//2+1] = 0
+        newhitimage = newhitimage - newhitmask
+    
+        if doinference == True:
+            for idx, predict in model(targets[minsadindex].astype(np.uint8, copy=False)).pandas().xyxy[0].iterrows():
+                newhitimage = cv2.rectangle(newhitimage, (newhitcol-w//2+round(predict["xmin"]), newhitrow-h//2+round(predict["ymin"])), (newhitcol-w//2+round(predict["xmax"]), newhitrow-h//2+round(predict["ymax"])), color=(0, 0, 255), thickness=2)
+                cv2.putText(newhitimage, predict["name"], (newhitcol-w//2+round(predict["xmin"]), newhitrow-h//2+round(predict["ymin"])-10), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+    
+        cv2.putText(newhitimage, str(newhit), (0, 0+20), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+        
+        totalhit = totalhit + 1
+    
+        image = cv2.hconcat([image, newhitimage])
+    
+        black = newhitimage.copy()
+        
+        #@ideo.write(image)
+        cv2.imshow(object_window, image)
+
+
+
+
+
 def main():
     args = parse_args()
     if args.update_iptables and sys.platform.startswith("linux"):
@@ -173,6 +306,7 @@ def main():
                                              args.device)
     depth_m = 1
 
+
     rgb_image = None
     with ctrl_c_handler() as ctrl_c:
         while not (quit_keypress() or ctrl_c):
@@ -210,8 +344,21 @@ def main():
                         rgb_calib,
                         depth_m,
                     )
+                    
+
+                    ##images.append(rgb_image)
+                    ##gazes.append(gaze_projection)
+                    images.append(np.rot90(rgb_image, -1).copy())
+                    gazes.append((int(gaze_projection[0]), width - 1 - int(gaze_projection[1])))
+                    vote()
+
+
                     print(gaze_projection)
+                    print(len(images), len(gazes))
+
+
                     cv2.circle(rgb_image, (int(gaze_projection[0]), int(gaze_projection[1])), 15, (0,255,0), -1)
+                    
 
                 cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
 
