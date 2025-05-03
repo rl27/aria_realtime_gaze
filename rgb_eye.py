@@ -96,10 +96,10 @@ import numba
 from numba import jit, prange
 import copy
 
-shift = 10
-skip = 5
+shift = 12
+skip = 6
 width, height = (1408, 1408)
-w, h = (400, 400)
+w, h = (300, 300)
 doinference = True
 
 
@@ -152,7 +152,7 @@ def vote():
     
     image = images[index].astype(np.uint8, copy=True)
     image = cv2.rectangle(image, (col-w//2, row-h//2), (col+w//2, row+h//2), color=(0, 255, 0), thickness=2)
-    cv2.putText(image, str(index), (0, 0+20), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(image, str(index), (0, 0+60), cv2.FONT_HERSHEY_COMPLEX_SMALL, 3, (255, 255, 255), 1, cv2.LINE_AA)
 
     ###continue
 
@@ -206,9 +206,9 @@ def vote():
         if doinference == True:
             for idx, predict in model(targets[minsadindex].astype(np.uint8, copy=False)).pandas().xyxy[0].iterrows():
                 newhitimage = cv2.rectangle(newhitimage, (newhitcol-w//2+round(predict["xmin"]), newhitrow-h//2+round(predict["ymin"])), (newhitcol-w//2+round(predict["xmax"]), newhitrow-h//2+round(predict["ymax"])), color=(0, 0, 255), thickness=2)
-                cv2.putText(newhitimage, predict["name"], (newhitcol-w//2+round(predict["xmin"]), newhitrow-h//2+round(predict["ymin"])-10), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(newhitimage, predict["name"], (newhitcol-w//2+round(predict["xmin"]), newhitrow-h//2+round(predict["ymin"])-30), cv2.FONT_HERSHEY_COMPLEX_SMALL, 3, (255, 255, 255), 1, cv2.LINE_AA)
     
-        cv2.putText(newhitimage, str(newhit), (0, 0+20), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(newhitimage, str(newhit), (0, 0+60), cv2.FONT_HERSHEY_COMPLEX_SMALL, 3, (255, 255, 255), 1, cv2.LINE_AA)
         
         totalhit = totalhit + 1
     
@@ -290,15 +290,15 @@ def main():
     rgb_window = "RGB images"
     eye_window = "Eye tracking"
 
-    cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(rgb_window, 512, 512)
-    cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(rgb_window, 50, 50)
+    ###cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
+    ###cv2.resizeWindow(rgb_window, 512, 512)
+    ###cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
+    ###cv2.moveWindow(rgb_window, 50, 50)
 
-    cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(eye_window, 512, 512)
-    cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(eye_window, 600, 50)
+    ###cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
+    ###cv2.resizeWindow(eye_window, 512, 512)
+    ###cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
+    ###cv2.moveWindow(eye_window, 600, 50)
 
     # 10. Set up inference model
     inference_model = infer.EyeGazeInference(f"{os.path.dirname(__file__)}/model/weights.pth",
@@ -314,7 +314,7 @@ def main():
                 rgb_image = cv2.cvtColor(observer.rgb_image, cv2.COLOR_BGR2RGB)
 
                 if observer.eye_image is not None:
-                    cv2.imshow(eye_window, observer.eye_image)
+                    ###cv2.imshow(eye_window, observer.eye_image)
 
                     # input size: 240x640
                     img = torch.tensor(observer.eye_image, device=args.device)
@@ -353,14 +353,14 @@ def main():
                     vote()
 
 
-                    print(gaze_projection)
-                    print(len(images), len(gazes))
+                    ###print(gaze_projection)
+                    ###print(len(images), len(gazes))
 
 
-                    cv2.circle(rgb_image, (int(gaze_projection[0]), int(gaze_projection[1])), 15, (0,255,0), -1)
+                    ###cv2.circle(rgb_image, (int(gaze_projection[0]), int(gaze_projection[1])), 15, (0,255,0), -1)
                     
 
-                cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
+                ###cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
 
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
