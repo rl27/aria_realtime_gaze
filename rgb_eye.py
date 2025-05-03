@@ -99,7 +99,7 @@ import copy
 shift = 12
 skip = 6
 width, height = (1408, 1408)
-w, h = (300, 300)
+w, h = (400, 400)
 doinference = True
 
 
@@ -134,7 +134,7 @@ def calcsads(targets):
 
 
 
-model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True, device="mps")
+model = torch.hub.load('ultralytics/yolov5', 'yolov5x', pretrained=True, device="mps")
 
 
 object_window = "Object Tracking"
