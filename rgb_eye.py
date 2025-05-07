@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ultralytics import YOLO
+
 import argparse
 import sys
 
@@ -41,7 +43,8 @@ import torch
 try:
     from inference import infer  # Try local imports first
 except ImportError:
-    from projectaria_eyetracking.inference import infer
+    #from projectaria_eyetracking.inference import infer
+    pass
 
 from projectaria_tools.core import data_provider
 from projectaria_tools.core.mps import EyeGaze, get_eyegaze_point_at_depth
@@ -84,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="cpu",
+        default="mps",
         help="device to run inference on",
     )
     return parser.parse_args()
@@ -95,9 +98,10 @@ def parse_args() -> argparse.Namespace:
 import numba
 from numba import jit, prange
 import copy
+import time
 
-shift = 12
-skip = 6
+shift = 30
+skip = 15
 width, height = (1408, 1408)
 w, h = (400, 400)
 doinference = True
@@ -110,6 +114,9 @@ lasthittarget = np.zeros((h + 1, w + 1, 3), dtype=np.int32)
 
 images = []
 gazes = []
+
+fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+video = cv2.VideoWriter("video-" + str(time.time()) + ".avi", fourcc, 10, (2816, 1408))
 
 
 @numba.jit(nopython=True, parallel=True, fastmath=True, cache=True, nogil=True)
@@ -134,7 +141,10 @@ def calcsads(targets):
 
 
 
-model = torch.hub.load('ultralytics/yolov5', 'yolov5x', pretrained=True, device="mps")
+model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True, device="mps")
+
+# model = YOLO("yolo11x.pt")
+# model = model.to(torch.device("mps"))
 
 
 object_window = "Object Tracking"
@@ -158,7 +168,7 @@ def vote():
 
     if index < lasthit + shift:
         image = cv2.hconcat([image, black])
-        #@video.write(image)
+        video.write(image)
         cv2.imshow(object_window, image)
         ###continue
         return
@@ -180,7 +190,7 @@ def vote():
     if True and calcsads(newtargets) == minsadindex:
         lasthittarget = targets[minsadindex].copy()
         image = cv2.hconcat([image, black])
-        #@video.write(image)
+        video.write(image)
         cv2.imshow(object_window, image)
         ###print(index)
         ###continue
@@ -191,7 +201,7 @@ def vote():
 
     if True and minsadindex < skip:
         image = cv2.hconcat([image, black])
-        #@video.write(image)
+        video.write(image)
         cv2.imshow(object_window, image)
         ###continue
         return
@@ -216,7 +226,7 @@ def vote():
     
         black = newhitimage.copy()
         
-        #@ideo.write(image)
+        video.write(image)
         cv2.imshow(object_window, image)
 
 
@@ -364,6 +374,7 @@ def main():
 
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
+    video.release()
     streaming_client.unsubscribe()
     streaming_manager.stop_streaming()
     device_client.disconnect(device)
