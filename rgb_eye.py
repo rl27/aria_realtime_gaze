@@ -1,19 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from ultralytics import YOLO
-
 import argparse
 import sys
 
@@ -43,8 +27,7 @@ import torch
 try:
     from inference import infer  # Try local imports first
 except ImportError:
-    #from projectaria_eyetracking.inference import infer
-    pass
+    from projectaria_eyetracking.inference import infer
 
 from projectaria_tools.core import data_provider
 from projectaria_tools.core.mps import EyeGaze, get_eyegaze_point_at_depth
@@ -100,8 +83,8 @@ from numba import jit, prange
 import copy
 import time
 
-shift = 30
-skip = 15
+shift = 12
+skip = 6
 width, height = (1408, 1408)
 w, h = (400, 400)
 doinference = True
@@ -140,11 +123,7 @@ def calcsads(targets):
     return np.argmax(np.bincount(sads.argmin(axis=1)))
 
 
-
 model = torch.hub.load('ultralytics/yolov5', 'yolov5x6', pretrained=True, device="mps")
-
-# model = YOLO("yolo11x.pt")
-# model = model.to(torch.device("mps"))
 
 
 object_window = "Object Tracking"
@@ -152,7 +131,6 @@ cv2.namedWindow(object_window, cv2.WINDOW_NORMAL)
 cv2.resizeWindow(object_window, 512, 512)
 cv2.setWindowProperty(object_window, cv2.WND_PROP_TOPMOST, 1)
 cv2.moveWindow(object_window, 50, 50)
-
 
 
 def vote():
@@ -228,9 +206,6 @@ def vote():
         
         video.write(image)
         cv2.imshow(object_window, image)
-
-
-
 
 
 def main():
