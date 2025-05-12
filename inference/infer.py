@@ -39,7 +39,7 @@ class EyeGazeInference:
         model (nn.Module): The loaded model.
     """
 
-    def __init__(self, model_checkpoint_path, model_config_path, device="mps"):
+    def __init__(self, model_checkpoint_path, model_config_path, device="cpu"):
         self.model_checkpoint_path = model_checkpoint_path
         self.model_config_path = model_config_path
         self.device = device
@@ -71,11 +71,11 @@ class EyeGazeInference:
         print(f"Initialized network weights from:\n{self.model_checkpoint_path}")
         print(" ******************MODEL LOADED AND INIT*******************")
         # Make Data parallel and put on GPU
-        model.to(torch.device("mps"))
-
         if torch.cuda.is_available() and self.device != "cpu":
             model = model.cuda(self.device)
             torch.backends.cudnn.benchmark = True
+        elif torch.backends.mps.is_available() and self.device == "mps": # Metal Performance Shaders
+            model.to(torch.device("mps"))
 
         model.eval()
         return model
