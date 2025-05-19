@@ -5,8 +5,8 @@ Setup:
 * `pip install -r requirements.txt`
 
 All versions of `rgb_eye` default to using USB connection and Metal Performance Shaders.
-* `python rgb_eye.py` runs object detection on the eye gaze region with our method of reducing inferences. Also saves a video recording of the outputs.
-* `python rgb_eye_full.py` runs object detection on the eye gaze region on every frame.
+* `python rgb_eye.py` runs object detection on the eye gaze region with our method of reducing inferences. Also saves a video recording of the outputs. (Need to download the YOLO model)
+* `python rgb_eye_full.py` runs object detection on the eye gaze region on every frame. (Need to download the YOLO model)
 * `python rgb_eye_dot.py` visualizes the eye gaze as a single dot. No object detection.
 * `python device_stream.py` visualizes all sensors in the glasses.
 
