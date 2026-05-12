@@ -71,14 +71,12 @@ def parse_args() -> argparse.Namespace:
         "--device-serial-a",
         type=str,
         default='1WM093701V1275',
-        required=True,
         help="Serial number for device A.",
     )
     parser.add_argument(
         "--device-serial-b",
         type=str,
         default='1WM103501F1325',
-        required=True,
         help="Serial number for device B.",
     )
     parser.add_argument(
@@ -109,6 +107,17 @@ def main():
             if record.camera_id == aria.CameraId.EyeTrack:
                 self.eye_image = image
 
+    def get_connected_serial(device):
+        for attr in ("device_serial", "serial_number", "serial", "device_serial_number"):
+            if hasattr(device, attr):
+                return getattr(device, attr)
+        if hasattr(device, "device_info"):
+            info = device.device_info
+            for attr in ("device_serial", "serial_number", "serial", "device_serial_number"):
+                if hasattr(info, attr):
+                    return getattr(info, attr)
+        return None
+
     def connect_device(device_serial: str):
         device_client = aria.DeviceClient()
         client_config = aria.DeviceClientConfig()
@@ -118,6 +127,10 @@ def main():
         device_client.set_client_config(client_config)
 
         device = device_client.connect()
+        connected_serial = get_connected_serial(device)
+        print(
+            f"Requested serial {device_serial}; connected serial {connected_serial or 'unknown'}"
+        )
         streaming_manager = device.streaming_manager
         streaming_client = streaming_manager.streaming_client
 
@@ -154,6 +167,12 @@ def main():
 
     device_a = connect_device(args.device_serial_a)
     device_b = connect_device(args.device_serial_b)
+    serial_a = get_connected_serial(device_a["device"])
+    serial_b = get_connected_serial(device_b["device"])
+    if serial_a and serial_b and serial_a == serial_b:
+        print(
+            "Warning: both connections resolved to the same device serial."
+        )
 
     # 9. Render the streaming data until we close the window
     rgb_window_a = "RGB images - A"
