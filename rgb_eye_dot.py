@@ -68,6 +68,18 @@ def parse_args() -> argparse.Namespace:
         "--device-ip", help="IP address to connect to the device over wifi"
     )
     parser.add_argument(
+        "--device-serial-a",
+        type=str,
+        required=True,
+        help="Serial number for device A.",
+    )
+    parser.add_argument(
+        "--device-serial-b",
+        type=str,
+        required=True,
+        help="Serial number for device B.",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="mps",
@@ -84,46 +96,6 @@ def main():
     #  Optional: Set SDK's log level to Trace or Debug for more verbose logs. Defaults to Info
     aria.set_log_level(aria.Level.Info)
 
-    # 1. Create DeviceClient instance, setting the IP address if specified
-    device_client = aria.DeviceClient()
-
-    client_config = aria.DeviceClientConfig()
-    if args.device_ip:
-        client_config.ip_v4_address = args.device_ip
-    device_client.set_client_config(client_config)
-
-    # 2. Connect to the device
-    device = device_client.connect()
-
-    # 3. Retrieve the device streaming_manager and streaming_client
-    streaming_manager = device.streaming_manager
-    streaming_client = streaming_manager.streaming_client
-
-    # 4. Use a custom configuration for streaming
-    streaming_config = aria.StreamingConfig()
-    streaming_config.profile_name = args.profile_name
-    # Note: by default streaming uses Wifi
-    if args.streaming_interface == "usb":
-        streaming_config.streaming_interface = aria.StreamingInterface.Usb
-    streaming_config.security_options.use_ephemeral_certs = True
-    streaming_manager.streaming_config = streaming_config
-
-    # 5. Get sensors calibration
-    sensors_calib_json = streaming_manager.sensors_calibration()
-    sensors_calib = device_calibration_from_json_string(sensors_calib_json)
-    rgb_calib = sensors_calib.get_camera_calib("camera-rgb")
-
-    dst_calib = get_linear_camera_calibration(512, 512, 150, "camera-rgb")
-
-    # 6. Start streaming
-    streaming_manager.start_streaming()
-
-    # 7. Configure subscription to listen to Aria's RGB and eye track stream
-    config = streaming_client.subscription_config
-    config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
-    streaming_client.subscription_config = config
-
-    # 8. Create and attach the visualizer and start listening to streaming data
     class StreamingClientObserver:
         def __init__(self):
             self.rgb_image = None
@@ -135,42 +107,104 @@ def main():
             if record.camera_id == aria.CameraId.EyeTrack:
                 self.eye_image = image
 
-    observer = StreamingClientObserver()
-    streaming_client.set_streaming_client_observer(observer)
-    streaming_client.subscribe()
+    def connect_device(device_serial: str):
+        device_client = aria.DeviceClient()
+        client_config = aria.DeviceClientConfig()
+        client_config.device_serial = device_serial
+        if args.device_ip:
+            client_config.ip_v4_address = args.device_ip
+        device_client.set_client_config(client_config)
+
+        device = device_client.connect()
+        streaming_manager = device.streaming_manager
+        streaming_client = streaming_manager.streaming_client
+
+        streaming_config = aria.StreamingConfig()
+        streaming_config.profile_name = args.profile_name
+        if args.streaming_interface == "usb":
+            streaming_config.streaming_interface = aria.StreamingInterface.Usb
+        streaming_config.security_options.use_ephemeral_certs = True
+        streaming_manager.streaming_config = streaming_config
+
+        sensors_calib_json = streaming_manager.sensors_calibration()
+        sensors_calib = device_calibration_from_json_string(sensors_calib_json)
+        rgb_calib = sensors_calib.get_camera_calib("camera-rgb")
+
+        streaming_manager.start_streaming()
+
+        config = streaming_client.subscription_config
+        config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
+        streaming_client.subscription_config = config
+
+        observer = StreamingClientObserver()
+        streaming_client.set_streaming_client_observer(observer)
+        streaming_client.subscribe()
+
+        return {
+            "device_client": device_client,
+            "device": device,
+            "streaming_manager": streaming_manager,
+            "streaming_client": streaming_client,
+            "observer": observer,
+            "sensors_calib": sensors_calib,
+            "rgb_calib": rgb_calib,
+        }
+
+    device_a = connect_device(args.device_serial_a)
+    device_b = connect_device(args.device_serial_b)
 
     # 9. Render the streaming data until we close the window
-    rgb_window = "RGB images"
-    eye_window = "Eye tracking"
+    rgb_window_a = "RGB images - A"
+    eye_window_a = "Eye tracking - A"
+    rgb_window_b = "RGB images - B"
+    eye_window_b = "Eye tracking - B"
 
-    cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(rgb_window, 512, 512)
-    cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(rgb_window, 50, 50)
+    cv2.namedWindow(rgb_window_a, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(rgb_window_a, 512, 512)
+    cv2.setWindowProperty(rgb_window_a, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(rgb_window_a, 50, 50)
 
-    cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(eye_window, 512, 512)
-    cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(eye_window, 600, 50)
+    cv2.namedWindow(eye_window_a, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(eye_window_a, 512, 512)
+    cv2.setWindowProperty(eye_window_a, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(eye_window_a, 600, 50)
+
+    cv2.namedWindow(rgb_window_b, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(rgb_window_b, 512, 512)
+    cv2.setWindowProperty(rgb_window_b, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(rgb_window_b, 50, 600)
+
+    cv2.namedWindow(eye_window_b, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(eye_window_b, 512, 512)
+    cv2.setWindowProperty(eye_window_b, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(eye_window_b, 600, 600)
 
     # 10. Set up inference model
-    inference_model = infer.EyeGazeInference(f"{os.path.dirname(__file__)}/model/weights.pth",
-                                             f"{os.path.dirname(__file__)}/model/config.yaml",
-                                             args.device)
+    inference_model_a = infer.EyeGazeInference(
+        f"{os.path.dirname(__file__)}/model/weights.pth",
+        f"{os.path.dirname(__file__)}/model/config.yaml",
+        args.device,
+    )
+    inference_model_b = infer.EyeGazeInference(
+        f"{os.path.dirname(__file__)}/model/weights.pth",
+        f"{os.path.dirname(__file__)}/model/config.yaml",
+        args.device,
+    )
     depth_m = 1
 
-    rgb_image = None
+    rgb_image_a = None
+    rgb_image_b = None
     with ctrl_c_handler() as ctrl_c:
         while not (quit_keypress() or ctrl_c):
-            if observer.rgb_image is not None:
-                rgb_image = cv2.cvtColor(observer.rgb_image, cv2.COLOR_BGR2RGB)
+            if device_a["observer"].rgb_image is not None:
+                rgb_image_a = cv2.cvtColor(device_a["observer"].rgb_image, cv2.COLOR_BGR2RGB)
 
-                if observer.eye_image is not None:
-                    cv2.imshow(eye_window, observer.eye_image)
+                if device_a["observer"].eye_image is not None:
+                    cv2.imshow(eye_window_a, device_a["observer"].eye_image)
 
                     # input size: 240x640
-                    img = torch.tensor(observer.eye_image, device=args.device)
-                    preds, lower, upper = inference_model.predict(img)
+                    img = torch.tensor(device_a["observer"].eye_image, device=args.device)
+                    preds, lower, upper = inference_model_a.predict(img)
                     preds = preds.detach().cpu().numpy()
                     lower = lower.detach().cpu().numpy()
                     upper = upper.detach().cpu().numpy()
@@ -187,25 +221,74 @@ def main():
                     eye_gaze.yaw = value_mapping["yaw"]
                     eye_gaze.pitch = value_mapping["pitch"]
 
-                    # Compute eye_gaze vector at depth_m reprojection in the image
-                    # Top right = (0,0), down = +x, left = +y
                     gaze_projection = get_gaze_vector_reprojection(
                         eye_gaze,
                         "camera-rgb",
-                        sensors_calib,
-                        rgb_calib,
+                        device_a["sensors_calib"],
+                        device_a["rgb_calib"],
                         depth_m,
                     )
-                    # print(gaze_projection)
-                    cv2.circle(rgb_image, (int(gaze_projection[0]), int(gaze_projection[1])), 15, (0,255,0), -1)
+                    cv2.circle(
+                        rgb_image_a,
+                        (int(gaze_projection[0]), int(gaze_projection[1])),
+                        15,
+                        (0, 255, 0),
+                        -1,
+                    )
 
-                cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
+                cv2.imshow(rgb_window_a, np.rot90(rgb_image_a, -1))
+
+            if device_b["observer"].rgb_image is not None:
+                rgb_image_b = cv2.cvtColor(device_b["observer"].rgb_image, cv2.COLOR_BGR2RGB)
+
+                if device_b["observer"].eye_image is not None:
+                    cv2.imshow(eye_window_b, device_b["observer"].eye_image)
+
+                    # input size: 240x640
+                    img = torch.tensor(device_b["observer"].eye_image, device=args.device)
+                    preds, lower, upper = inference_model_b.predict(img)
+                    preds = preds.detach().cpu().numpy()
+                    lower = lower.detach().cpu().numpy()
+                    upper = upper.detach().cpu().numpy()
+                    value_mapping = {
+                        "yaw": preds[0][0],
+                        "pitch": preds[0][1],
+                        "yaw_lower": lower[0][0],
+                        "pitch_lower": lower[0][1],
+                        "yaw_upper": upper[0][0],
+                        "pitch_upper": upper[0][1],
+                    }
+
+                    eye_gaze = EyeGaze
+                    eye_gaze.yaw = value_mapping["yaw"]
+                    eye_gaze.pitch = value_mapping["pitch"]
+
+                    gaze_projection = get_gaze_vector_reprojection(
+                        eye_gaze,
+                        "camera-rgb",
+                        device_b["sensors_calib"],
+                        device_b["rgb_calib"],
+                        depth_m,
+                    )
+                    cv2.circle(
+                        rgb_image_b,
+                        (int(gaze_projection[0]), int(gaze_projection[1])),
+                        15,
+                        (0, 255, 0),
+                        -1,
+                    )
+
+                cv2.imshow(rgb_window_b, np.rot90(rgb_image_b, -1))
 
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
-    streaming_client.unsubscribe()
-    streaming_manager.stop_streaming()
-    device_client.disconnect(device)
+    device_a["streaming_client"].unsubscribe()
+    device_a["streaming_manager"].stop_streaming()
+    device_a["device_client"].disconnect(device_a["device"])
+
+    device_b["streaming_client"].unsubscribe()
+    device_b["streaming_manager"].stop_streaming()
+    device_b["device_client"].disconnect(device_b["device"])
 
 
 if __name__ == "__main__":
