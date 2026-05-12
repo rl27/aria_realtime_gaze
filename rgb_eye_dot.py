@@ -70,12 +70,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device-serial-a",
         type=str,
+        default='1WM093701V1275',
         required=True,
         help="Serial number for device A.",
     )
     parser.add_argument(
         "--device-serial-b",
         type=str,
+        default='1WM103501F1325',
         required=True,
         help="Serial number for device B.",
     )
