@@ -132,18 +132,20 @@ def main():
                     return getattr(info, attr)
         return None
 
-    def connect_device(device_serial: str, device_ip: str | None):
+    def connect_device(device_serial: str | None, device_ip: str | None):
         device_client = aria.DeviceClient()
         client_config = aria.DeviceClientConfig()
-        client_config.device_serial = device_serial
         if device_ip:
             client_config.ip_v4_address = device_ip
+        elif device_serial:
+            client_config.device_serial = device_serial
         device_client.set_client_config(client_config)
 
         device = device_client.connect()
         connected_serial = get_connected_serial(device)
+        requested_hint = f"serial {device_serial}" if device_serial else f"ip {device_ip}"
         print(
-            f"Requested serial {device_serial}; connected serial {connected_serial or 'unknown'}"
+            f"Requested {requested_hint}; connected serial {connected_serial or 'unknown'}"
         )
         streaming_manager = device.streaming_manager
         streaming_client = streaming_manager.streaming_client
