@@ -94,6 +94,11 @@ def parse_args() -> argparse.Namespace:
         default="mps",
         help="device to run inference on",
     )
+    parser.add_argument(
+        "--start-streaming",
+        action="store_true",
+        help="Start streaming via SDK instead of using 'aria streaming start'.",
+    )
     return parser.parse_args()
 
 
@@ -130,45 +135,25 @@ def main():
     def connect_device(device_serial: str, device_ip: str | None):
         device_client = aria.DeviceClient()
         client_config = aria.DeviceClientConfig()
+        client_config.device_serial = device_serial
         if device_ip:
             client_config.ip_v4_address = device_ip
-        else:
-            client_config.device_serial = device_serial
         device_client.set_client_config(client_config)
 
         device = device_client.connect()
         connected_serial = get_connected_serial(device)
         print(
-            "Requested serial "
-            f"{device_serial}; connected serial {connected_serial or 'unknown'}; "
-            f"ip {device_ip or 'none'}"
+            f"Requested serial {device_serial}; connected serial {connected_serial or 'unknown'}"
         )
         streaming_manager = device.streaming_manager
         streaming_client = streaming_manager.streaming_client
-
-        streaming_config = aria.StreamingConfig()
-        streaming_config.profile_name = args.profile_name
-        if args.streaming_interface == "usb":
-            streaming_config.streaming_interface = aria.StreamingInterface.Usb
-        if args.streaming_interface == "wifi":
-            wifi_interface = getattr(aria.StreamingInterface, "WiFi", None)
-            if wifi_interface is None:
-                wifi_interface = getattr(aria.StreamingInterface, "Wifi", None)
-            if wifi_interface is not None:
-                streaming_config.streaming_interface = wifi_interface
-        streaming_config.security_options.use_ephemeral_certs = True
-        streaming_manager.streaming_config = streaming_config
 
         sensors_calib_json = streaming_manager.sensors_calibration()
         sensors_calib = device_calibration_from_json_string(sensors_calib_json)
         rgb_calib = sensors_calib.get_camera_calib("camera-rgb")
 
-        streaming_manager.start_streaming()
-
         config = streaming_client.subscription_config
-        config.subscriber_data_type = (
-            aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
-        )
+        config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
         config.message_queue_size[aria.StreamingDataType.Rgb] = 1
         config.message_queue_size[aria.StreamingDataType.EyeTrack] = 1
         options = aria.StreamingSecurityOptions()
@@ -178,6 +163,18 @@ def main():
 
         observer = StreamingClientObserver()
         streaming_client.set_streaming_client_observer(observer)
+
+        started_streaming = False
+        if args.start_streaming:
+            streaming_config = aria.StreamingConfig()
+            streaming_config.profile_name = args.profile_name
+            if args.streaming_interface == "usb":
+                streaming_config.streaming_interface = aria.StreamingInterface.Usb
+            streaming_config.security_options.use_ephemeral_certs = True
+            streaming_manager.streaming_config = streaming_config
+            streaming_manager.start_streaming()
+            started_streaming = True
+
         streaming_client.subscribe()
 
         return {
@@ -186,6 +183,7 @@ def main():
             "streaming_manager": streaming_manager,
             "streaming_client": streaming_client,
             "observer": observer,
+            "started_streaming": started_streaming,
             "sensors_calib": sensors_calib,
             "rgb_calib": rgb_calib,
         }
@@ -196,18 +194,14 @@ def main():
         raise ValueError(
             "Wi-Fi streaming requires --device-ip-a and --device-ip-b (or --device-ip as a shared fallback)."
         )
-    if device_a_ip and device_b_ip and device_a_ip == device_b_ip:
-        raise ValueError(
-            "Device A and B IPs are identical. Use two different IPs for two devices."
-        )
 
     device_a = connect_device(args.device_serial_a, device_a_ip)
     device_b = connect_device(args.device_serial_b, device_b_ip)
     serial_a = get_connected_serial(device_a["device"])
     serial_b = get_connected_serial(device_b["device"])
     if serial_a and serial_b and serial_a == serial_b:
-        raise RuntimeError(
-            "Both connections resolved to the same device serial."
+        print(
+            "Warning: both connections resolved to the same device serial."
         )
 
     # 9. Render the streaming data until we close the window
@@ -340,11 +334,13 @@ def main():
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
     device_a["streaming_client"].unsubscribe()
-    device_a["streaming_manager"].stop_streaming()
+    if device_a["started_streaming"]:
+        device_a["streaming_manager"].stop_streaming()
     device_a["device_client"].disconnect(device_a["device"])
 
     device_b["streaming_client"].unsubscribe()
-    device_b["streaming_manager"].stop_streaming()
+    if device_b["started_streaming"]:
+        device_b["streaming_manager"].stop_streaming()
     device_b["device_client"].disconnect(device_b["device"])
 
 
