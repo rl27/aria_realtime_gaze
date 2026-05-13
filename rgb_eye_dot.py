@@ -139,7 +139,9 @@ def main():
         device = device_client.connect()
         connected_serial = get_connected_serial(device)
         print(
-            f"Requested serial {device_serial}; connected serial {connected_serial or 'unknown'}"
+            "Requested serial "
+            f"{device_serial}; connected serial {connected_serial or 'unknown'}; "
+            f"ip {device_ip or 'none'}"
         )
         streaming_manager = device.streaming_manager
         streaming_client = streaming_manager.streaming_client
@@ -194,14 +196,18 @@ def main():
         raise ValueError(
             "Wi-Fi streaming requires --device-ip-a and --device-ip-b (or --device-ip as a shared fallback)."
         )
+    if device_a_ip and device_b_ip and device_a_ip == device_b_ip:
+        raise ValueError(
+            "Device A and B IPs are identical. Use two different IPs for two devices."
+        )
 
     device_a = connect_device(args.device_serial_a, device_a_ip)
     device_b = connect_device(args.device_serial_b, device_b_ip)
     serial_a = get_connected_serial(device_a["device"])
     serial_b = get_connected_serial(device_b["device"])
     if serial_a and serial_b and serial_a == serial_b:
-        print(
-            "Warning: both connections resolved to the same device serial."
+        raise RuntimeError(
+            "Both connections resolved to the same device serial."
         )
 
     # 9. Render the streaming data until we close the window
