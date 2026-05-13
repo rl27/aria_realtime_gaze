@@ -149,7 +149,11 @@ def main():
         if args.streaming_interface == "usb":
             streaming_config.streaming_interface = aria.StreamingInterface.Usb
         if args.streaming_interface == "wifi":
-            streaming_config.streaming_interface = aria.StreamingInterface.Wifi
+            wifi_interface = getattr(aria.StreamingInterface, "WiFi", None)
+            if wifi_interface is None:
+                wifi_interface = getattr(aria.StreamingInterface, "Wifi", None)
+            if wifi_interface is not None:
+                streaming_config.streaming_interface = wifi_interface
         streaming_config.security_options.use_ephemeral_certs = True
         streaming_manager.streaming_config = streaming_config
 
