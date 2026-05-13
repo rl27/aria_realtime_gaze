@@ -130,9 +130,10 @@ def main():
     def connect_device(device_serial: str, device_ip: str | None):
         device_client = aria.DeviceClient()
         client_config = aria.DeviceClientConfig()
-        client_config.device_serial = device_serial
         if device_ip:
             client_config.ip_v4_address = device_ip
+        else:
+            client_config.device_serial = device_serial
         device_client.set_client_config(client_config)
 
         device = device_client.connect()
