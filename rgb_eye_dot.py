@@ -143,7 +143,7 @@ def main():
 
         device = device_client.connect()
         connected_serial = get_connected_serial(device)
-        requested_hint = f"serial {device_serial}" if device_serial else f"ip {device_ip}"
+        requested_hint = f"ip {device_ip}" if device_ip else f"serial {device_serial}"
         print(
             f"Requested {requested_hint}; connected serial {connected_serial or 'unknown'}"
         )
@@ -196,6 +196,13 @@ def main():
         raise ValueError(
             "Wi-Fi streaming requires --device-ip-a and --device-ip-b (or --device-ip as a shared fallback)."
         )
+    if args.streaming_interface == "wifi" and device_a_ip == device_b_ip:
+        raise ValueError(
+            "Wi-Fi streaming requires two distinct device IPs; both resolved to the same value."
+        )
+
+    if args.streaming_interface == "wifi":
+        print(f"Resolved Wi-Fi IPs: A={device_a_ip}, B={device_b_ip}")
 
     device_a = connect_device(args.device_serial_a, device_a_ip)
     device_b = connect_device(args.device_serial_b, device_b_ip)
