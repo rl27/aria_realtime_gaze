@@ -1,5 +1,6 @@
 import argparse
 import sys
+import multiprocessing as mp
 
 import aria.sdk as aria
 
@@ -99,7 +100,185 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Start streaming via SDK instead of using 'aria streaming start'.",
     )
+    parser.add_argument(
+        "--no-split-processes",
+        action="store_true",
+        help="Disable multi-process mode for Wi-Fi streaming.",
+    )
     return parser.parse_args()
+
+
+def run_device(
+    label: str,
+    device_serial: str | None,
+    device_ip: str | None,
+    profile_name: str,
+    streaming_interface: str,
+    start_streaming: bool,
+    inference_device: str,
+) -> None:
+    #  Optional: Set SDK's log level to Trace or Debug for more verbose logs. Defaults to Info
+    aria.set_log_level(aria.Level.Info)
+
+    class StreamingClientObserver:
+        def __init__(self):
+            self.rgb_image = None
+            self.eye_image = None
+
+        def on_image_received(self, image: np.array, record: ImageDataRecord):
+            if record.camera_id == aria.CameraId.Rgb:
+                self.rgb_image = image
+            if record.camera_id == aria.CameraId.EyeTrack:
+                self.eye_image = image
+
+    def get_connected_serial(device):
+        for attr in ("device_serial", "serial_number", "serial", "device_serial_number"):
+            if hasattr(device, attr):
+                return getattr(device, attr)
+        if hasattr(device, "device_info"):
+            info = device.device_info
+            for attr in ("device_serial", "serial_number", "serial", "device_serial_number"):
+                if hasattr(info, attr):
+                    return getattr(info, attr)
+        return None
+
+    def connect_device(device_serial: str | None, device_ip: str | None):
+        device_client = aria.DeviceClient()
+        client_config = aria.DeviceClientConfig()
+        if device_ip:
+            client_config.ip_v4_address = device_ip
+        elif device_serial:
+            client_config.device_serial = device_serial
+        device_client.set_client_config(client_config)
+
+        device = device_client.connect()
+        connected_serial = get_connected_serial(device)
+        requested_hint = f"ip {device_ip}" if device_ip else f"serial {device_serial}"
+        print(
+            f"[{label}] Requested {requested_hint}; connected serial {connected_serial or 'unknown'}"
+        )
+        streaming_manager = device.streaming_manager
+        streaming_client = streaming_manager.streaming_client
+
+        sensors_calib_json = streaming_manager.sensors_calibration()
+        sensors_calib = device_calibration_from_json_string(sensors_calib_json)
+        rgb_calib = sensors_calib.get_camera_calib("camera-rgb")
+
+        config = streaming_client.subscription_config
+        config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
+        config.message_queue_size[aria.StreamingDataType.Rgb] = 1
+        config.message_queue_size[aria.StreamingDataType.EyeTrack] = 1
+        options = aria.StreamingSecurityOptions()
+        options.use_ephemeral_certs = True
+        config.security_options = options
+        streaming_client.subscription_config = config
+
+        observer = StreamingClientObserver()
+        streaming_client.set_streaming_client_observer(observer)
+
+        started_streaming = False
+        if start_streaming:
+            streaming_config = aria.StreamingConfig()
+            streaming_config.profile_name = profile_name
+            if streaming_interface == "usb":
+                streaming_config.streaming_interface = aria.StreamingInterface.Usb
+            streaming_config.security_options.use_ephemeral_certs = True
+            streaming_manager.streaming_config = streaming_config
+            streaming_manager.start_streaming()
+            started_streaming = True
+
+        streaming_client.subscribe()
+
+        return {
+            "device_client": device_client,
+            "device": device,
+            "streaming_manager": streaming_manager,
+            "streaming_client": streaming_client,
+            "observer": observer,
+            "started_streaming": started_streaming,
+            "sensors_calib": sensors_calib,
+            "rgb_calib": rgb_calib,
+        }
+
+    device_data = connect_device(device_serial, device_ip)
+
+    rgb_window = f"RGB images - {label}"
+    eye_window = f"Eye tracking - {label}"
+
+    if label.upper() == "A":
+        rgb_pos = (50, 50)
+        eye_pos = (600, 50)
+    else:
+        rgb_pos = (50, 600)
+        eye_pos = (600, 600)
+
+    cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(rgb_window, 512, 512)
+    cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(rgb_window, *rgb_pos)
+
+    cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(eye_window, 512, 512)
+    cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(eye_window, *eye_pos)
+
+    inference_model = infer.EyeGazeInference(
+        f"{os.path.dirname(__file__)}/model/weights.pth",
+        f"{os.path.dirname(__file__)}/model/config.yaml",
+        inference_device,
+    )
+    depth_m = 1
+
+    rgb_image = None
+    with ctrl_c_handler() as ctrl_c:
+        while not (quit_keypress() or ctrl_c):
+            if device_data["observer"].rgb_image is not None:
+                rgb_image = cv2.cvtColor(device_data["observer"].rgb_image, cv2.COLOR_BGR2RGB)
+
+                if device_data["observer"].eye_image is not None:
+                    cv2.imshow(eye_window, device_data["observer"].eye_image)
+
+                    # input size: 240x640
+                    img = torch.tensor(device_data["observer"].eye_image, device=inference_device)
+                    preds, lower, upper = inference_model.predict(img)
+                    preds = preds.detach().cpu().numpy()
+                    lower = lower.detach().cpu().numpy()
+                    upper = upper.detach().cpu().numpy()
+                    value_mapping = {
+                        "yaw": preds[0][0],
+                        "pitch": preds[0][1],
+                        "yaw_lower": lower[0][0],
+                        "pitch_lower": lower[0][1],
+                        "yaw_upper": upper[0][0],
+                        "pitch_upper": upper[0][1],
+                    }
+
+                    eye_gaze = EyeGaze
+                    eye_gaze.yaw = value_mapping["yaw"]
+                    eye_gaze.pitch = value_mapping["pitch"]
+
+                    gaze_projection = get_gaze_vector_reprojection(
+                        eye_gaze,
+                        "camera-rgb",
+                        device_data["sensors_calib"],
+                        device_data["rgb_calib"],
+                        depth_m,
+                    )
+                    cv2.circle(
+                        rgb_image,
+                        (int(gaze_projection[0]), int(gaze_projection[1])),
+                        15,
+                        (0, 255, 0),
+                        -1,
+                    )
+
+                cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
+
+    print("Stop listening to image data")
+    device_data["streaming_client"].unsubscribe()
+    if device_data["started_streaming"]:
+        device_data["streaming_manager"].stop_streaming()
+    device_data["device_client"].disconnect(device_data["device"])
 
 
 def main():
@@ -203,6 +382,39 @@ def main():
 
     if args.streaming_interface == "wifi":
         print(f"Resolved Wi-Fi IPs: A={device_a_ip}, B={device_b_ip}")
+
+    if args.streaming_interface == "wifi" and not args.no_split_processes:
+        processes = [
+            mp.Process(
+                target=run_device,
+                args=(
+                    "A",
+                    args.device_serial_a,
+                    device_a_ip,
+                    args.profile_name,
+                    args.streaming_interface,
+                    args.start_streaming,
+                    args.device,
+                ),
+            ),
+            mp.Process(
+                target=run_device,
+                args=(
+                    "B",
+                    args.device_serial_b,
+                    device_b_ip,
+                    args.profile_name,
+                    args.streaming_interface,
+                    args.start_streaming,
+                    args.device,
+                ),
+            ),
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join()
+        return
 
     device_a = connect_device(args.device_serial_a, device_a_ip)
     device_b = connect_device(args.device_serial_b, device_b_ip)
