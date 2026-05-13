@@ -65,7 +65,16 @@ def parse_args() -> argparse.Namespace:
         help="Profile to be used for streaming.",
     )
     parser.add_argument(
-        "--device-ip", help="IP address to connect to the device over wifi"
+        "--device-ip",
+        help="IP address to connect to the device over wifi (legacy/shared)",
+    )
+    parser.add_argument(
+        "--device-ip-a",
+        help="IP address for device A over wifi (overrides --device-ip)",
+    )
+    parser.add_argument(
+        "--device-ip-b",
+        help="IP address for device B over wifi (overrides --device-ip)",
     )
     parser.add_argument(
         "--device-serial-a",
@@ -118,12 +127,12 @@ def main():
                     return getattr(info, attr)
         return None
 
-    def connect_device(device_serial: str):
+    def connect_device(device_serial: str, device_ip: str | None):
         device_client = aria.DeviceClient()
         client_config = aria.DeviceClientConfig()
         client_config.device_serial = device_serial
-        if args.device_ip:
-            client_config.ip_v4_address = args.device_ip
+        if device_ip:
+            client_config.ip_v4_address = device_ip
         device_client.set_client_config(client_config)
 
         device = device_client.connect()
@@ -165,8 +174,15 @@ def main():
             "rgb_calib": rgb_calib,
         }
 
-    device_a = connect_device(args.device_serial_a)
-    device_b = connect_device(args.device_serial_b)
+    device_a_ip = args.device_ip_a or args.device_ip
+    device_b_ip = args.device_ip_b or args.device_ip
+    if args.streaming_interface == "wifi" and (not device_a_ip or not device_b_ip):
+        raise ValueError(
+            "Wi-Fi streaming requires --device-ip-a and --device-ip-b (or --device-ip as a shared fallback)."
+        )
+
+    device_a = connect_device(args.device_serial_a, device_a_ip)
+    device_b = connect_device(args.device_serial_b, device_b_ip)
     serial_a = get_connected_serial(device_a["device"])
     serial_b = get_connected_serial(device_b["device"])
     if serial_a and serial_b and serial_a == serial_b:
