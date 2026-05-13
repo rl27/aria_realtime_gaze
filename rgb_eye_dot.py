@@ -147,6 +147,8 @@ def main():
         streaming_config.profile_name = args.profile_name
         if args.streaming_interface == "usb":
             streaming_config.streaming_interface = aria.StreamingInterface.Usb
+        if args.streaming_interface == "wifi":
+            streaming_config.streaming_interface = aria.StreamingInterface.Wifi
         streaming_config.security_options.use_ephemeral_certs = True
         streaming_manager.streaming_config = streaming_config
 
@@ -157,7 +159,14 @@ def main():
         streaming_manager.start_streaming()
 
         config = streaming_client.subscription_config
-        config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
+        config.subscriber_data_type = (
+            aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
+        )
+        config.message_queue_size[aria.StreamingDataType.Rgb] = 1
+        config.message_queue_size[aria.StreamingDataType.EyeTrack] = 1
+        options = aria.StreamingSecurityOptions()
+        options.use_ephemeral_certs = True
+        config.security_options = options
         streaming_client.subscription_config = config
 
         observer = StreamingClientObserver()
