@@ -1,9 +1,11 @@
 import argparse
 import sys
+import random
 
 import aria.sdk as aria
 
 import cv2
+import cv2.aruco as aruco
 import numpy as np
 
 from common import ctrl_c_handler, quit_keypress, update_iptables
@@ -141,18 +143,93 @@ def main():
 
     # 9. Render the streaming data until we close the window
     rgb_window = "RGB images"
-    eye_window = "Eye tracking"
+    maze_window = "Maze Game"
 
     cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(rgb_window, 512, 512)
     cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(rgb_window, 50, 50)
+    cv2.moveWindow(rgb_window, 800, 50)
 
-    cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(eye_window, 512, 512)
-    cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
-    cv2.moveWindow(eye_window, 600, 50)
+    # Setup the Maze window with a specific size
+    vw, vh = 1600, 1000
+    cv2.namedWindow(maze_window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(maze_window, vw, vh)
+    cv2.setWindowProperty(maze_window, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(maze_window, 50, 50)
 
+    # Initialize ArUco dictionary and parameters
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    aruco_params = aruco.DetectorParameters()
+    try:
+        aruco_detector = aruco.ArucoDetector(aruco_dict, aruco_params)
+    except AttributeError:
+        # Fallback for older OpenCV versions
+        aruco_detector = None
+    
+    # Generate 4 ArUco markers for the screen corners
+    marker_size = 180
+    margin = 30
+    m0 = aruco.generateImageMarker(aruco_dict, 0, marker_size)
+    m1 = aruco.generateImageMarker(aruco_dict, 1, marker_size)
+    m2 = aruco.generateImageMarker(aruco_dict, 2, marker_size)
+    m3 = aruco.generateImageMarker(aruco_dict, 3, marker_size)
+    
+    # Generate random maze background map
+    def generate_random_maze(cols, rows):
+        maze = np.ones((rows * 2 + 1, cols * 2 + 1), dtype=np.uint8)
+        def carve(r, c):
+            maze[r*2+1, c*2+1] = 0
+            dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+            random.shuffle(dirs)
+            for dr, dc in dirs:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols and maze[nr*2+1, nc*2+1] == 1:
+                    maze[r*2+1 + dr, c*2+1 + dc] = 0
+                    carve(nr, nc)
+        old_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(old_limit, cols*rows*10))
+        carve(0, 0)
+        sys.setrecursionlimit(old_limit)
+        # Keep the start closed so the dot cannot exit the maze backwards
+        # maze[1, 0] = 0
+        maze[rows*2-1, cols*2] = 0 # end
+        return maze
+
+    maze_cols, maze_rows = 12, 8
+    path_size = 60
+    wall_size = 15
+
+    def get_coord(idx):
+        # Even indices are walls, odd indices are paths
+        return (idx // 2) * (path_size + wall_size) + (idx % 2) * wall_size
+
+    maze_grid = generate_random_maze(maze_cols, maze_rows)
+    maze_w = get_coord(maze_cols * 2 + 1)
+    maze_h = get_coord(maze_rows * 2 + 1)
+    maze_start_x = (vw - maze_w) // 2
+    maze_start_y = (vh - maze_h) // 2
+
+    # Draw static components of the maze once
+    static_maze_frame = np.ones((vh, vw, 3), dtype=np.uint8) * 255
+    static_maze_frame[margin:margin+marker_size, margin:margin+marker_size] = cv2.cvtColor(m0, cv2.COLOR_GRAY2BGR)
+    static_maze_frame[margin:margin+marker_size, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m1, cv2.COLOR_GRAY2BGR)
+    static_maze_frame[vh-marker_size-margin:vh-margin, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m2, cv2.COLOR_GRAY2BGR)
+    static_maze_frame[vh-marker_size-margin:vh-margin, margin:margin+marker_size] = cv2.cvtColor(m3, cv2.COLOR_GRAY2BGR)
+
+    for r in range(maze_grid.shape[0]):
+        for c in range(maze_grid.shape[1]):
+            if maze_grid[r, c] == 1:
+                cx1 = maze_start_x + get_coord(c)
+                cy1 = maze_start_y + get_coord(r)
+                cx2 = maze_start_x + get_coord(c + 1)
+                cy2 = maze_start_y + get_coord(r + 1)
+                cv2.rectangle(static_maze_frame, (cx1, cy1), (cx2, cy2), (0, 0, 0), -1)
+
+    start_text_pos = (maze_start_x - 120, maze_start_y + get_coord(1) + 40)
+    end_text_pos = (maze_start_x + maze_w + 20, maze_start_y + get_coord(maze_rows * 2 - 1) + 40)
+    cv2.putText(static_maze_frame, "START", start_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv2.putText(static_maze_frame, "END", end_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    
     # 10. Set up inference model
     inference_model = infer.EyeGazeInference(f"{os.path.dirname(__file__)}/model/weights.pth",
                                              f"{os.path.dirname(__file__)}/model/config.yaml",
@@ -160,46 +237,166 @@ def main():
     depth_m = 1
 
     rgb_image = None
+    gaze_point_on_screen = None
+    last_H = None
+    
+    # Physics and smoothing state for the gaze dot
+    smoothed_gaze_x = None
+    smoothed_gaze_y = None
+    dot_x = float(maze_start_x + get_coord(1) + path_size / 2)
+    dot_y = float(maze_start_y + get_coord(1) + path_size / 2)
+    dot_vx = 0.0
+    dot_vy = 0.0
+    dot_radius = 12
+
     with ctrl_c_handler() as ctrl_c:
         while not (quit_keypress() or ctrl_c):
+            # Start fresh frame with pre-computed maze and markers
+            maze_frame = static_maze_frame.copy()
+
             if observer.rgb_image is not None:
-                rgb_image = cv2.cvtColor(observer.rgb_image, cv2.COLOR_BGR2RGB)
+                # Undistort the original image first
+                undistorted_rgb = distort_by_calibration(observer.rgb_image, dst_calib, rgb_calib)
+                
+                # Rotate because typical camera mount might require it
+                rgb_image = np.ascontiguousarray(np.rot90(cv2.cvtColor(undistorted_rgb, cv2.COLOR_BGR2RGB), -1))
 
                 if observer.eye_image is not None:
-                    cv2.imshow(eye_window, observer.eye_image)
-
                     # input size: 240x640
                     img = torch.tensor(observer.eye_image, device=args.device)
                     preds, lower, upper = inference_model.predict(img)
                     preds = preds.detach().cpu().numpy()
-                    lower = lower.detach().cpu().numpy()
-                    upper = upper.detach().cpu().numpy()
-                    value_mapping = {
-                        "yaw": preds[0][0],
-                        "pitch": preds[0][1],
-                        "yaw_lower": lower[0][0],
-                        "pitch_lower": lower[0][1],
-                        "yaw_upper": upper[0][0],
-                        "pitch_upper": upper[0][1],
-                    }
-
+                    
                     eye_gaze = EyeGaze
-                    eye_gaze.yaw = value_mapping["yaw"]
-                    eye_gaze.pitch = value_mapping["pitch"]
+                    eye_gaze.yaw = preds[0][0]
+                    eye_gaze.pitch = preds[0][1]
 
-                    # Compute eye_gaze vector at depth_m reprojection in the image
-                    # Top right = (0,0), down = +x, left = +y
                     gaze_projection = get_gaze_vector_reprojection(
                         eye_gaze,
                         "camera-rgb",
                         sensors_calib,
-                        rgb_calib,
+                        dst_calib,
                         depth_m,
                     )
-                    # print(gaze_projection)
-                    cv2.circle(rgb_image, (int(gaze_projection[0]), int(gaze_projection[1])), 15, (0,255,0), -1)
+                    
+                    # Compute gaze on the unrotated camera feed, then rotate for our drawing
+                    gx, gy = int(gaze_projection[0]), int(gaze_projection[1])
+                    
+                    # Original image was WxH. It was rotated -90 (clockwise), so new shape is HxW.
+                    # Clockwise rotation mapping: x_new = H - 1 - y, y_new = x
+                    original_h = undistorted_rgb.shape[0]
+                    rotated_gx = original_h - 1 - gy
+                    rotated_gy = gx
+                    
+                    cv2.circle(rgb_image, (rotated_gx, rotated_gy), 5, (0, 255, 0), -1)
 
-                cv2.imshow(rgb_window, np.rot90(rgb_image, -1))
+                    # ArUco marker detection to map gaze to screen
+                    gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
+                    if aruco_detector is not None:
+                        corners, ids, rejected = aruco_detector.detectMarkers(gray)
+                    else:
+                        corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+
+                    if ids is not None:
+                        # Highlight detected markers on the RGB image
+                        if aruco_detector is not None:
+                            cv2.aruco.drawDetectedMarkers(rgb_image, corners, ids)
+                        else:
+                            aruco.drawDetectedMarkers(rgb_image, corners, ids)
+                        
+                        # Map markers found to the theoretical corners they represent on the maze frame
+                        screen_pts = []
+                        camera_pts = []
+                        for i in range(len(ids)):
+                            marker_id = ids[i][0]
+                            if marker_id in [0, 1, 2, 3]:
+                                # Center of marker in camera
+                                c = np.mean(corners[i][0], axis=0)
+                                camera_pts.append(c)
+                                
+                                # Center of marker on screen (adjusted for margin)
+                                if marker_id == 0: screen_pts.append([margin + marker_size/2, margin + marker_size/2])
+                                elif marker_id == 1: screen_pts.append([vw - margin - marker_size/2, margin + marker_size/2])
+                                elif marker_id == 2: screen_pts.append([vw - margin - marker_size/2, vh - margin - marker_size/2])
+                                elif marker_id == 3: screen_pts.append([margin + marker_size/2, vh - margin - marker_size/2])
+
+                        if len(camera_pts) == 4:
+                            camera_pts = np.array(camera_pts, dtype=np.float32)
+                            screen_pts = np.array(screen_pts, dtype=np.float32)
+
+                            # Calculate Homography matrix
+                            H, _ = cv2.findHomography(camera_pts, screen_pts)
+                            if H is not None:
+                                last_H = H
+
+                    if last_H is not None:
+                        gaze_pt = np.array([[[rotated_gx, rotated_gy]]], dtype=np.float32)
+                        transformed_gaze = cv2.perspectiveTransform(gaze_pt, last_H)
+                        gaze_point_on_screen = transformed_gaze[0][0]
+
+            # Draw the gaze dot on the screen if it falls within the screen boundaries
+            if gaze_point_on_screen is not None:
+                raw_cx, raw_cy = float(gaze_point_on_screen[0]), float(gaze_point_on_screen[1])
+                
+                # 1. EMA to smooth the raw gaze coordinates
+                if smoothed_gaze_x is None:
+                    smoothed_gaze_x, smoothed_gaze_y = raw_cx, raw_cy
+                else:
+                    alpha = 0.7  # Increased to make the raw tracking target more responsive
+                    smoothed_gaze_x = alpha * raw_cx + (1 - alpha) * smoothed_gaze_x
+                    smoothed_gaze_y = alpha * raw_cy + (1 - alpha) * smoothed_gaze_y
+                
+                # Only move the dot if gaze actively falls onto the screen tracking boundaries
+                if 0 <= smoothed_gaze_x < vw and 0 <= smoothed_gaze_y < vh:
+                    spring_k = 0.015  # Decreased to lower acceleration
+                    damping = 0.7     # Decreased multiplier for higher friction/lower top speed
+                    
+                    ax = (smoothed_gaze_x - dot_x) * spring_k
+                    ay = (smoothed_gaze_y - dot_y) * spring_k
+                    
+                    dot_vx = (dot_vx + ax) * damping
+                    dot_vy = (dot_vy + ay) * damping
+
+                    # Maze Collision Logic: Sample background pixels to see if moving there hits a black wall
+                    def check_collision(nx, ny):
+                        perimeter_angles = [0, np.pi/2, np.pi, 3*np.pi/2, np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4]
+                        for a in perimeter_angles:
+                            px = int(nx + dot_radius * np.cos(a))
+                            py = int(ny + dot_radius * np.sin(a))
+                            if 0 <= px < vw and 0 <= py < vh:
+                                if np.all(static_maze_frame[py, px] == [0, 0, 0]):
+                                    return True
+                            else:
+                                return True # Hit outer window boundary
+                        return False
+
+                    # Resolve X and Y independently with sub-stepping to prevent tunneling through thin walls
+                    steps_x = int(abs(dot_vx)) + 1
+                    step_dx = dot_vx / steps_x
+                    for _ in range(steps_x):
+                        if not check_collision(dot_x + step_dx, dot_y):
+                            dot_x += step_dx
+                        else:
+                            dot_vx = 0
+                            break
+                            
+                    steps_y = int(abs(dot_vy)) + 1
+                    step_dy = dot_vy / steps_y
+                    for _ in range(steps_y):
+                        if not check_collision(dot_x, dot_y + step_dy):
+                            dot_y += step_dy
+                        else:
+                            dot_vy = 0
+                            break
+
+            # Draw the dot itself, mapped natively onto the canvas now instead of only conditionally based on sight
+            draw_x = int(max(0, min(vw - 1, dot_x)))
+            draw_y = int(max(0, min(vh - 1, dot_y)))
+            cv2.circle(maze_frame, (draw_x, draw_y), dot_radius, (255, 0, 0), -1)
+
+            cv2.imshow(maze_window, maze_frame)
+            if rgb_image is not None:
+                cv2.imshow(rgb_window, rgb_image)
 
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
