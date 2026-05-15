@@ -219,32 +219,35 @@ def main():
         # Even indices are walls, odd indices are paths
         return (idx // 2) * (path_size + wall_size) + (idx % 2) * wall_size
 
-    maze_grid = generate_random_maze(maze_cols, maze_rows)
     maze_w = get_coord(maze_cols * 2 + 1)
     maze_h = get_coord(maze_rows * 2 + 1)
     maze_start_x = (vw - maze_w) // 2
     maze_start_y = (vh - maze_h) // 2
 
-    # Draw static components of the maze once
-    static_maze_frame = np.ones((vh, vw, 3), dtype=np.uint8) * 255
-    static_maze_frame[margin:margin+marker_size, margin:margin+marker_size] = cv2.cvtColor(m0, cv2.COLOR_GRAY2BGR)
-    static_maze_frame[margin:margin+marker_size, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m1, cv2.COLOR_GRAY2BGR)
-    static_maze_frame[vh-marker_size-margin:vh-margin, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m2, cv2.COLOR_GRAY2BGR)
-    static_maze_frame[vh-marker_size-margin:vh-margin, margin:margin+marker_size] = cv2.cvtColor(m3, cv2.COLOR_GRAY2BGR)
+    def gen_static_maze_frame():
+        maze_grid = generate_random_maze(maze_cols, maze_rows)
+        frame = np.ones((vh, vw, 3), dtype=np.uint8) * 255
+        frame[margin:margin+marker_size, margin:margin+marker_size] = cv2.cvtColor(m0, cv2.COLOR_GRAY2BGR)
+        frame[margin:margin+marker_size, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m1, cv2.COLOR_GRAY2BGR)
+        frame[vh-marker_size-margin:vh-margin, vw-marker_size-margin:vw-margin] = cv2.cvtColor(m2, cv2.COLOR_GRAY2BGR)
+        frame[vh-marker_size-margin:vh-margin, margin:margin+marker_size] = cv2.cvtColor(m3, cv2.COLOR_GRAY2BGR)
 
-    for r in range(maze_grid.shape[0]):
-        for c in range(maze_grid.shape[1]):
-            if maze_grid[r, c] == 1:
-                cx1 = maze_start_x + get_coord(c)
-                cy1 = maze_start_y + get_coord(r)
-                cx2 = maze_start_x + get_coord(c + 1)
-                cy2 = maze_start_y + get_coord(r + 1)
-                cv2.rectangle(static_maze_frame, (cx1, cy1), (cx2, cy2), (0, 0, 0), -1)
+        for r in range(maze_grid.shape[0]):
+            for c in range(maze_grid.shape[1]):
+                if maze_grid[r, c] == 1:
+                    cx1 = maze_start_x + get_coord(c)
+                    cy1 = maze_start_y + get_coord(r)
+                    cx2 = maze_start_x + get_coord(c + 1)
+                    cy2 = maze_start_y + get_coord(r + 1)
+                    cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), (0, 0, 0), -1)
 
-    start_text_pos = (maze_start_x - 120, maze_start_y + get_coord(1) + 40)
-    end_text_pos = (maze_start_x + maze_w + 20, maze_start_y + get_coord(maze_rows * 2 - 1) + 40)
-    cv2.putText(static_maze_frame, "START", start_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(static_maze_frame, "END", end_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        start_text_pos = (maze_start_x - 120, maze_start_y + get_coord(1) + 40)
+        end_text_pos = (maze_start_x + maze_w + 20, maze_start_y + get_coord(maze_rows * 2 - 1) + 40)
+        cv2.putText(frame, "START", start_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(frame, "END", end_text_pos, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        return frame
+
+    static_maze_frame = gen_static_maze_frame()
     
     # 10. Set up inference model
     inference_model = infer.EyeGazeInference(f"{os.path.dirname(__file__)}/model/weights.pth",
@@ -265,8 +268,37 @@ def main():
     dot_vy = 0.0
     dot_radius = 12
 
+    # Calibration state
+    is_calibrating = False
+    is_calibrated = False
+    calibration_step = 0
+    calibration_points = [
+        (vw // 2, vh // 2),
+        (200, 200),
+        (vw - 200, 200),
+        (vw - 200, vh - 200),
+        (200, vh - 200)
+    ]
+    calib_wait_frames = 45
+    calib_collect_frames = 30
+    current_calib_frame = 0
+    collected_gaze = []
+    calibration_data = [] # List of (target_pt, [gaze_pts...])
+    calib_transform = None
+
     with ctrl_c_handler() as ctrl_c:
-        while not (quit_keypress() or ctrl_c):
+        while not ctrl_c:
+            key = cv2.waitKey(1)
+            if key == 27 or key == ord("q"):
+                break
+            elif key == ord("c"):
+                is_calibrating = True
+                is_calibrated = False
+                calibration_step = 0
+                current_calib_frame = 0
+                calibration_data = []
+                collected_gaze = []
+
             # Start fresh frame with pre-computed maze and markers
             maze_frame = static_maze_frame.copy()
 
@@ -354,6 +386,62 @@ def main():
             if gaze_point_on_screen is not None:
                 raw_cx, raw_cy = float(gaze_point_on_screen[0]), float(gaze_point_on_screen[1])
                 
+                if is_calibrating:
+                    # Hide the maze, leave markers visible
+                    cv2.rectangle(maze_frame, (maze_start_x - 130, maze_start_y - 20), (maze_start_x + maze_w + 130, maze_start_y + maze_h + 20), (255, 255, 255), -1)
+
+                    # Draw calibration target
+                    target_pt = calibration_points[calibration_step]
+                    cv2.circle(maze_frame, target_pt, 15, (0, 0, 255), -1)
+                    
+                    # Highlight inner part based on progress
+                    if current_calib_frame > calib_wait_frames:
+                        cv2.circle(maze_frame, target_pt, 5, (0, 255, 0), -1)
+                        
+                    cv2.putText(maze_frame, "Look at the red dot and keep your head still", (vw//2 - 300, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    cv2.putText(maze_frame, f"Point {calibration_step + 1}/{len(calibration_points)}", (vw//2 - 80, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    
+                    current_calib_frame += 1
+                    
+                    if current_calib_frame > calib_wait_frames:
+                        collected_gaze.append([raw_cx, raw_cy])
+                        
+                    if current_calib_frame > calib_wait_frames + calib_collect_frames:
+                        calibration_data.append((calibration_points[calibration_step], collected_gaze))
+                        calibration_step += 1
+                        current_calib_frame = 0
+                        collected_gaze = []
+                        if calibration_step >= len(calibration_points):
+                            is_calibrating = False
+                            is_calibrated = True
+                            # Compute perspective transformation fixing screen mapping
+                            src_pts = []
+                            dst_pts = []
+                            for target, gazes in calibration_data:
+                                if len(gazes) > 0:
+                                    avg_gaze = np.mean(gazes, axis=0)
+                                    src_pts.append(avg_gaze)
+                                    dst_pts.append(target)
+                            
+                            if len(src_pts) == len(calibration_points):
+                                src_pts = np.array(src_pts, dtype=np.float32)
+                                dst_pts = np.array(dst_pts, dtype=np.float32)
+                                calib_transform, _ = cv2.findHomography(src_pts, dst_pts)
+                                
+                                # Reset maze and dot position
+                                static_maze_frame = gen_static_maze_frame()
+                                dot_x = float(maze_start_x + get_coord(1) + path_size / 2)
+                                dot_y = float(maze_start_y + get_coord(1) + path_size / 2)
+                                dot_vx = 0.0
+                                dot_vy = 0.0
+                            else:
+                                is_calibrated = False # Failed
+                
+                if is_calibrated and calib_transform is not None:
+                    pt = np.array([[[raw_cx, raw_cy]]], dtype=np.float32)
+                    transformed_pt = cv2.perspectiveTransform(pt, calib_transform)
+                    raw_cx, raw_cy = float(transformed_pt[0][0][0]), float(transformed_pt[0][0][1])
+
                 # 1. EMA to smooth the raw gaze coordinates
                 if smoothed_gaze_x is None:
                     smoothed_gaze_x, smoothed_gaze_y = raw_cx, raw_cy
@@ -362,8 +450,9 @@ def main():
                     smoothed_gaze_x = alpha * raw_cx + (1 - alpha) * smoothed_gaze_x
                     smoothed_gaze_y = alpha * raw_cy + (1 - alpha) * smoothed_gaze_y
                 
-                # Only move the dot if gaze actively falls onto the screen tracking boundaries
-                if 0 <= smoothed_gaze_x < vw and 0 <= smoothed_gaze_y < vh:
+                # Only move the dot if gaze actively falls onto the screen tracking boundaries (with an expanded margin)
+                margin_expand = 400
+                if -margin_expand <= smoothed_gaze_x < vw + margin_expand and -margin_expand <= smoothed_gaze_y < vh + margin_expand:
                     spring_k = 0.015  # Decreased to lower acceleration
                     damping = 0.7     # Decreased multiplier for higher friction/lower top speed
                     
@@ -405,10 +494,11 @@ def main():
                             dot_vy = 0
                             break
 
-            # Draw the dot itself, mapped natively onto the canvas now instead of only conditionally based on sight
-            draw_x = int(max(0, min(vw - 1, dot_x)))
-            draw_y = int(max(0, min(vh - 1, dot_y)))
-            cv2.circle(maze_frame, (draw_x, draw_y), dot_radius, (255, 0, 0), -1)
+            # Draw the dot itself, mapped natively onto the canvas if not calibrating
+            if not is_calibrating:
+                draw_x = int(max(0, min(vw - 1, dot_x)))
+                draw_y = int(max(0, min(vh - 1, dot_y)))
+                cv2.circle(maze_frame, (draw_x, draw_y), dot_radius, (255, 0, 0), -1)
 
             cv2.imshow(maze_window, maze_frame)
             if rgb_image is not None:
