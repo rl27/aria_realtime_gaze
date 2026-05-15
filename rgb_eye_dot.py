@@ -49,8 +49,8 @@ def parse_args() -> argparse.Namespace:
         dest="streaming_interface",
         type=str,
         default="usb",
-        help="Type of interface to use for streaming. Options are usb or wifi.",
-        choices=["usb", "wifi"],
+        help="Type of interface to use for streaming. Options are usb, wifi, or subscribe.",
+        choices=["usb", "wifi", "subscribe"],
     )
     parser.add_argument(
         "--update_iptables",
@@ -99,16 +99,21 @@ def main():
 
     # 3. Retrieve the device streaming_manager and streaming_client
     streaming_manager = device.streaming_manager
-    streaming_client = streaming_manager.streaming_client
+    
+    if args.streaming_interface == "subscribe":
+        # Act like streaming_subscribe: create a separate StreamingClient to just listen
+        streaming_client = aria.StreamingClient()
+    else:
+        streaming_client = streaming_manager.streaming_client
 
-    # 4. Use a custom configuration for streaming
-    streaming_config = aria.StreamingConfig()
-    streaming_config.profile_name = args.profile_name
-    # Note: by default streaming uses Wifi
-    if args.streaming_interface == "usb":
-        streaming_config.streaming_interface = aria.StreamingInterface.Usb
-    streaming_config.security_options.use_ephemeral_certs = True
-    streaming_manager.streaming_config = streaming_config
+        # 4. Use a custom configuration for streaming
+        streaming_config = aria.StreamingConfig()
+        streaming_config.profile_name = args.profile_name
+        # Note: by default streaming uses Wifi
+        if args.streaming_interface == "usb":
+            streaming_config.streaming_interface = aria.StreamingInterface.Usb
+        streaming_config.security_options.use_ephemeral_certs = True
+        streaming_manager.streaming_config = streaming_config
 
     # 5. Get sensors calibration
     sensors_calib_json = streaming_manager.sensors_calibration()
@@ -117,12 +122,17 @@ def main():
 
     dst_calib = get_linear_camera_calibration(512, 512, 150, "camera-rgb")
 
-    # 6. Start streaming
-    streaming_manager.start_streaming()
+    # 6. Start streaming if not just subscribing
+    if args.streaming_interface != "subscribe":
+        streaming_manager.start_streaming()
 
     # 7. Configure subscription to listen to Aria's RGB and eye track stream
     config = streaming_client.subscription_config
     config.subscriber_data_type = aria.StreamingDataType.Rgb | aria.StreamingDataType.EyeTrack
+    if args.streaming_interface == "subscribe":
+        options = aria.StreamingSecurityOptions()
+        options.use_ephemeral_certs = True
+        config.security_options = options
     streaming_client.subscription_config = config
 
     # 8. Create and attach the visualizer and start listening to streaming data
@@ -144,11 +154,17 @@ def main():
     # 9. Render the streaming data until we close the window
     rgb_window = "RGB images"
     maze_window = "Maze Game"
+    eye_window = "Eye images"
 
     cv2.namedWindow(rgb_window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(rgb_window, 512, 512)
     cv2.setWindowProperty(rgb_window, cv2.WND_PROP_TOPMOST, 1)
     cv2.moveWindow(rgb_window, 800, 50)
+
+    cv2.namedWindow(eye_window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(eye_window, 640, 240)
+    cv2.setWindowProperty(eye_window, cv2.WND_PROP_TOPMOST, 1)
+    cv2.moveWindow(eye_window, 800, 600)
 
     # Setup the Maze window with a specific size
     vw, vh = 1600, 1000
@@ -397,11 +413,14 @@ def main():
             cv2.imshow(maze_window, maze_frame)
             if rgb_image is not None:
                 cv2.imshow(rgb_window, rgb_image)
+            if observer.eye_image is not None:
+                cv2.imshow(eye_window, observer.eye_image)
 
     # 10. Unsubscribe from data and stop streaming
     print("Stop listening to image data")
     streaming_client.unsubscribe()
-    streaming_manager.stop_streaming()
+    if args.streaming_interface != "subscribe":
+        streaming_manager.stop_streaming()
     device_client.disconnect(device)
 
 
