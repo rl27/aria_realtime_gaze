@@ -21,6 +21,14 @@ Wifi:
 2. Connect glasses to hotspot using Aria companion app, connect computer to hotspot
 2. `python rgb_eye_dot.py --interface wifi --device-ip [glasses ip listed in companion app]`
 
+## Streaming instructions
+
+Press 'c' to calibrate gaze.
+
+Press 't' to reset the position to the start of the maze and reset the ending celebration.
+
+Press 'r' to randomize the maze, reset the position, and reset the celebration.
+
 ## References
 
 Reference: https://facebookresearch.github.io/projectaria_tools/docs/ARK/sdk/samples/streaming_subscribe

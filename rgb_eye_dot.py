@@ -268,6 +268,11 @@ def main():
     dot_vy = 0.0
     dot_radius = 12
 
+    # Celebration state
+    is_won = False
+    confetti = [] # List of dicts representing confetti particles
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255), (255, 0, 255), (255, 255, 0)]
+
     # Calibration state
     is_calibrating = False
     is_calibrated = False
@@ -298,6 +303,21 @@ def main():
                 current_calib_frame = 0
                 calibration_data = []
                 collected_gaze = []
+            elif key == ord("r"):
+                static_maze_frame = gen_static_maze_frame()
+                dot_x = float(maze_start_x + get_coord(1) + path_size / 2)
+                dot_y = float(maze_start_y + get_coord(1) + path_size / 2)
+                dot_vx = 0.0
+                dot_vy = 0.0
+                is_won = False
+                confetti = []
+            elif key == ord("t"):
+                dot_x = float(maze_start_x + get_coord(1) + path_size / 2)
+                dot_y = float(maze_start_y + get_coord(1) + path_size / 2)
+                dot_vx = 0.0
+                dot_vy = 0.0
+                is_won = False
+                confetti = []
 
             # Start fresh frame with pre-computed maze and markers
             maze_frame = static_maze_frame.copy()
@@ -427,13 +447,6 @@ def main():
                                 src_pts = np.array(src_pts, dtype=np.float32)
                                 dst_pts = np.array(dst_pts, dtype=np.float32)
                                 calib_transform, _ = cv2.findHomography(src_pts, dst_pts)
-                                
-                                # Reset maze and dot position
-                                static_maze_frame = gen_static_maze_frame()
-                                dot_x = float(maze_start_x + get_coord(1) + path_size / 2)
-                                dot_y = float(maze_start_y + get_coord(1) + path_size / 2)
-                                dot_vx = 0.0
-                                dot_vy = 0.0
                             else:
                                 is_calibrated = False # Failed
                 
@@ -494,11 +507,53 @@ def main():
                             dot_vy = 0
                             break
 
+                # Check win condition
+                if not is_won and not is_calibrating and dot_x > maze_start_x + maze_w:
+                    is_won = True
+                    for _ in range(150):
+                        confetti.append({
+                            'x': random.randint(100, vw - 100),
+                            'y': random.randint(-600, -50),
+                            'vx': random.uniform(-3, 3),
+                            'vy': random.uniform(4, 10),
+                            'color': random.choice(colors),
+                            'size': random.randint(4, 12),
+                            'angle': random.uniform(0, 2*np.pi),
+                            'spin': random.uniform(-0.2, 0.2)
+                        })
+
             # Draw the dot itself, mapped natively onto the canvas if not calibrating
             if not is_calibrating:
                 draw_x = int(max(0, min(vw - 1, dot_x)))
                 draw_y = int(max(0, min(vh - 1, dot_y)))
                 cv2.circle(maze_frame, (draw_x, draw_y), dot_radius, (255, 0, 0), -1)
+
+            if is_won:
+                # Update and draw confetti
+                for c in confetti:
+                    c['x'] += c['vx']
+                    c['y'] += c['vy']
+                    c['vy'] += 0.1 # Gravity
+                    c['angle'] += c['spin']
+                    
+                    if c['y'] < vh + 100: # only draw if on screen
+                        # Draw moving rectangle instead of simple circle
+                        pts = np.array([
+                            [-c['size'], -c['size']/2],
+                            [c['size'], -c['size']/2],
+                            [c['size'], c['size']/2],
+                            [-c['size'], c['size']/2]
+                        ])
+                    # Rotate
+                    rot_mat = np.array([
+                        [np.cos(c['angle']), -np.sin(c['angle'])],
+                        [np.sin(c['angle']), np.cos(c['angle'])]
+                    ])
+                    rot_pts = np.dot(pts, rot_mat.T)
+                    rot_pts[:, 0] += c['x']
+                    rot_pts[:, 1] += c['y']
+                    
+                    cv2.fillPoly(maze_frame, [np.int32(rot_pts)], c['color'])
 
             cv2.imshow(maze_window, maze_frame)
             if rgb_image is not None:
