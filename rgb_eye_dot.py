@@ -284,8 +284,8 @@ def main():
         (vw - 200, vh - 200),
         (200, vh - 200)
     ]
-    calib_wait_frames = 45
-    calib_collect_frames = 30
+    calib_wait_frames = 60
+    calib_collect_frames = 60
     current_calib_frame = 0
     collected_gaze = []
     calibration_data = [] # List of (target_pt, [gaze_pts...])
@@ -464,7 +464,7 @@ def main():
                     smoothed_gaze_y = alpha * raw_cy + (1 - alpha) * smoothed_gaze_y
                 
                 # Only move the dot if gaze actively falls onto the screen tracking boundaries (with an expanded margin)
-                margin_expand = 400
+                margin_expand = 800
                 if -margin_expand <= smoothed_gaze_x < vw + margin_expand and -margin_expand <= smoothed_gaze_y < vh + margin_expand:
                     spring_k = 0.015  # Decreased to lower acceleration
                     damping = 0.7     # Decreased multiplier for higher friction/lower top speed
